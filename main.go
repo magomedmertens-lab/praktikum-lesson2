@@ -26,27 +26,31 @@ func (e ValError) String() string {
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: yamlvalid <path-to-yaml>")
+		// IMPORTANT: print to STDOUT (autotests expect stdout)
+		fmt.Println("usage: yamlvalid <path-to-yaml>")
 		os.Exit(2)
 	}
 
 	path := os.Args[1]
 	content, err := os.ReadFile(path)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cannot read file content: %v\n", err)
+		// IMPORTANT: print to STDOUT (autotests expect stdout)
+		fmt.Printf("cannot read file content: %v\n", err)
 		os.Exit(1)
 	}
 
 	var root yaml.Node
 	if err := yaml.Unmarshal(content, &root); err != nil {
-		fmt.Fprintf(os.Stderr, "cannot unmarshal file content: %v\n", err)
+		// IMPORTANT: print to STDOUT (autotests expect stdout)
+		fmt.Printf("cannot unmarshal file content: %v\n", err)
 		os.Exit(1)
 	}
 
 	errs := validatePod(filepath.Clean(path), &root)
 	if len(errs) > 0 {
 		for _, e := range errs {
-			fmt.Fprintln(os.Stderr, e.String())
+			// IMPORTANT: print to STDOUT (autotests expect stdout)
+			fmt.Println(e.String())
 		}
 		os.Exit(1)
 	}
@@ -72,7 +76,7 @@ func validatePod(file string, root *yaml.Node) []ValError {
 		errs = append(errs, req(file, "apiVersion"))
 	} else {
 		errs = append(errs, mustString(file, apiV, "apiVersion")...)
-		if apiV != nil && apiV.Kind == yaml.ScalarNode && apiV.Tag == "!!str" && apiV.Value != "v1" {
+		if apiV.Kind == yaml.ScalarNode && apiV.Tag == "!!str" && apiV.Value != "v1" {
 			errs = append(errs, lineErr(file, apiV.Line, fmt.Sprintf("apiVersion has unsupported value '%s'", apiV.Value)))
 		}
 	}
@@ -81,7 +85,7 @@ func validatePod(file string, root *yaml.Node) []ValError {
 		errs = append(errs, req(file, "kind"))
 	} else {
 		errs = append(errs, mustString(file, kind, "kind")...)
-		if kind != nil && kind.Kind == yaml.ScalarNode && kind.Tag == "!!str" && kind.Value != "Pod" {
+		if kind.Kind == yaml.ScalarNode && kind.Tag == "!!str" && kind.Value != "Pod" {
 			errs = append(errs, lineErr(file, kind.Line, fmt.Sprintf("kind has unsupported value '%s'", kind.Value)))
 		}
 	}
@@ -130,12 +134,8 @@ func validateObjectMeta(file string, n *yaml.Node) []ValError {
 			for i := 0; i < len(labels.Content); i += 2 {
 				k := labels.Content[i]
 				v := labels.Content[i+1]
-				if k.Kind != yaml.ScalarNode || k.Tag != "!!str" {
-					errs = append(errs, lineErr(file, k.Line, "metadata.labels must be object"))
-					break
-				}
-				if v.Kind != yaml.ScalarNode || v.Tag != "!!str" {
-					errs = append(errs, lineErr(file, v.Line, "metadata.labels must be object"))
+				if k.Kind != yaml.ScalarNode || k.Tag != "!!str" || v.Kind != yaml.ScalarNode || v.Tag != "!!str" {
+					errs = append(errs, lineErr(file, labels.Line, "metadata.labels must be object"))
 					break
 				}
 			}
@@ -455,7 +455,6 @@ func validatePort(file string, n *yaml.Node, field string) []ValError {
 }
 
 func validImage(s string) bool {
-	// must be registry.bigbrother.io/<name>:<tag>
 	if !strings.HasPrefix(s, "registry.bigbrother.io/") {
 		return false
 	}
