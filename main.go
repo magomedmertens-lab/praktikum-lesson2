@@ -26,7 +26,7 @@ func (e ValError) String() string {
 
 func main() {
 	if len(os.Args) != 2 {
-		// IMPORTANT: print to STDOUT (autotests expect stdout)
+		// IMPORTANT: stdout (autotests expect it)
 		fmt.Println("usage: yamlvalid <path-to-yaml>")
 		os.Exit(2)
 	}
@@ -34,14 +34,14 @@ func main() {
 	path := os.Args[1]
 	content, err := os.ReadFile(path)
 	if err != nil {
-		// IMPORTANT: print to STDOUT (autotests expect stdout)
+		// IMPORTANT: stdout
 		fmt.Printf("cannot read file content: %v\n", err)
 		os.Exit(1)
 	}
 
 	var root yaml.Node
 	if err := yaml.Unmarshal(content, &root); err != nil {
-		// IMPORTANT: print to STDOUT (autotests expect stdout)
+		// IMPORTANT: stdout
 		fmt.Printf("cannot unmarshal file content: %v\n", err)
 		os.Exit(1)
 	}
@@ -49,7 +49,7 @@ func main() {
 	errs := validatePod(filepath.Clean(path), &root)
 	if len(errs) > 0 {
 		for _, e := range errs {
-			// IMPORTANT: print to STDOUT (autotests expect stdout)
+			// IMPORTANT: stdout
 			fmt.Println(e.String())
 		}
 		os.Exit(1)
@@ -66,7 +66,6 @@ func validatePod(file string, root *yaml.Node) []ValError {
 
 	var errs []ValError
 
-	// Top-level required
 	apiV := get(doc, "apiVersion")
 	kind := get(doc, "kind")
 	meta := get(doc, "metadata")
@@ -114,28 +113,34 @@ func validateObjectMeta(file string, n *yaml.Node) []ValError {
 
 	var errs []ValError
 
+	// name required (empty string = required error)
 	name := get(n, "name")
 	if name == nil {
-		errs = append(errs, req(file, "metadata.name"))
+		errs = append(errs, req(file, "name"))
 	} else {
-		errs = append(errs, mustString(file, name, "metadata.name")...)
+		if es := mustString(file, name, "name"); len(es) > 0 {
+			errs = append(errs, es...)
+		} else if strings.TrimSpace(name.Value) == "" {
+			// expected: "<file>:<line> name is required"
+			errs = append(errs, lineErr(file, name.Line, "name is required"))
+		}
 	}
 
 	// namespace optional
 	if ns := get(n, "namespace"); ns != nil {
-		errs = append(errs, mustString(file, ns, "metadata.namespace")...)
+		errs = append(errs, mustString(file, ns, "namespace")...)
 	}
 
 	// labels optional: object of string->string
 	if labels := get(n, "labels"); labels != nil {
 		if labels.Kind != yaml.MappingNode {
-			errs = append(errs, lineErr(file, labels.Line, "metadata.labels must be object"))
+			errs = append(errs, lineErr(file, labels.Line, "labels must be object"))
 		} else {
 			for i := 0; i < len(labels.Content); i += 2 {
 				k := labels.Content[i]
 				v := labels.Content[i+1]
 				if k.Kind != yaml.ScalarNode || k.Tag != "!!str" || v.Kind != yaml.ScalarNode || v.Tag != "!!str" {
-					errs = append(errs, lineErr(file, labels.Line, "metadata.labels must be object"))
+					errs = append(errs, lineErr(file, labels.Line, "labels must be object"))
 					break
 				}
 			}
@@ -154,14 +159,14 @@ func validatePodSpec(file string, n *yaml.Node) []ValError {
 
 	var errs []ValError
 
-	// os optional: support scalar os: linux/windows OR object os: {name: ...}
+	// os optional: scalar or object {name: ...}
 	if osNode := get(n, "os"); osNode != nil {
 		errs = append(errs, validatePodOS(file, osNode)...)
 	}
 
 	containers := get(n, "containers")
 	if containers == nil {
-		errs = append(errs, req(file, "spec.containers"))
+		errs = append(errs, req(file, "containers"))
 		return errs
 	}
 	errs = append(errs, validateContainers(file, containers)...)
@@ -174,7 +179,6 @@ func validatePodSpec(file string, n *yaml.Node) []ValError {
 func validatePodOS(file string, n *yaml.Node) []ValError {
 	allowed := map[string]bool{"linux": true, "windows": true}
 
-	// scalar
 	if n.Kind == yaml.ScalarNode {
 		if n.Tag != "!!str" {
 			return []ValError{lineErr(file, n.Line, "os must be string")}
@@ -185,10 +189,10 @@ func validatePodOS(file string, n *yaml.Node) []ValError {
 		return nil
 	}
 
-	// object
 	if n.Kind != yaml.MappingNode {
 		return []ValError{lineErr(file, n.Line, "os must be object")}
 	}
+
 	name := get(n, "name")
 	if name == nil {
 		return []ValError{req(file, "os.name")}
@@ -209,10 +213,10 @@ var memRe = regexp.MustCompile(`^[0-9]+(Ki|Mi|Gi)$`)
 
 func validateContainers(file string, n *yaml.Node) []ValError {
 	if n.Kind != yaml.SequenceNode {
-		return []ValError{lineErr(file, n.Line, "spec.containers must be array")}
+		return []ValError{lineErr(file, n.Line, "containers must be array")}
 	}
 	if len(n.Content) == 0 {
-		return []ValError{req(file, "spec.containers")}
+		return []ValError{req(file, "containers")}
 	}
 
 	var errs []ValError
@@ -224,7 +228,6 @@ func validateContainers(file string, n *yaml.Node) []ValError {
 			continue
 		}
 
-		// name required
 		cname := get(c, "name")
 		if cname == nil {
 			errs = append(errs, req(file, "containers.name"))
@@ -237,7 +240,6 @@ func validateContainers(file string, n *yaml.Node) []ValError {
 			seen[cname.Value] = true
 		}
 
-		// image required
 		img := get(c, "image")
 		if img == nil {
 			errs = append(errs, req(file, "containers.image"))
@@ -247,12 +249,10 @@ func validateContainers(file string, n *yaml.Node) []ValError {
 			errs = append(errs, lineErr(file, img.Line, fmt.Sprintf("containers.image has invalid format '%s'", img.Value)))
 		}
 
-		// ports optional
 		if ports := get(c, "ports"); ports != nil {
 			errs = append(errs, validatePorts(file, ports)...)
 		}
 
-		// probes optional
 		if rp := get(c, "readinessProbe"); rp != nil {
 			errs = append(errs, validateProbe(file, rp, "readinessProbe")...)
 		}
@@ -260,7 +260,6 @@ func validateContainers(file string, n *yaml.Node) []ValError {
 			errs = append(errs, validateProbe(file, lp, "livenessProbe")...)
 		}
 
-		// resources required
 		res := get(c, "resources")
 		if res == nil {
 			errs = append(errs, req(file, "resources"))
