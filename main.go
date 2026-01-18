@@ -26,7 +26,6 @@ func (e ValError) String() string {
 
 func main() {
 	if len(os.Args) != 2 {
-		// IMPORTANT: stdout (autotests expect it)
 		fmt.Println("usage: yamlvalid <path-to-yaml>")
 		os.Exit(2)
 	}
@@ -34,28 +33,24 @@ func main() {
 	path := os.Args[1]
 	content, err := os.ReadFile(path)
 	if err != nil {
-		// IMPORTANT: stdout
 		fmt.Printf("cannot read file content: %v\n", err)
 		os.Exit(1)
 	}
 
 	var root yaml.Node
 	if err := yaml.Unmarshal(content, &root); err != nil {
-		// IMPORTANT: stdout
 		fmt.Printf("cannot unmarshal file content: %v\n", err)
 		os.Exit(1)
 	}
 
-	// IMPORTANT: only filename, not full path (tests expect basename)
+	// tests expect only filename, not full path
 	errs := validatePod(filepath.Base(path), &root)
 	if len(errs) > 0 {
 		for _, e := range errs {
-			// IMPORTANT: stdout
 			fmt.Println(e.String())
 		}
 		os.Exit(1)
 	}
-
 	os.Exit(0)
 }
 
@@ -114,7 +109,7 @@ func validateObjectMeta(file string, n *yaml.Node) []ValError {
 
 	var errs []ValError
 
-	// name required (empty string = required error)
+	// metadata.name required, but message must be "name is required"
 	name := get(n, "name")
 	if name == nil {
 		errs = append(errs, req(file, "name"))
@@ -122,7 +117,6 @@ func validateObjectMeta(file string, n *yaml.Node) []ValError {
 		if es := mustString(file, name, "name"); len(es) > 0 {
 			errs = append(errs, es...)
 		} else if strings.TrimSpace(name.Value) == "" {
-			// expected: "<file>:<line> name is required"
 			errs = append(errs, lineErr(file, name.Line, "name is required"))
 		}
 	}
@@ -229,18 +223,24 @@ func validateContainers(file string, n *yaml.Node) []ValError {
 			continue
 		}
 
+		// containers[].name required (empty => "name is required")
 		cname := get(c, "name")
 		if cname == nil {
-			errs = append(errs, req(file, "containers.name"))
+			errs = append(errs, req(file, "name"))
 		} else if cname.Kind != yaml.ScalarNode || cname.Tag != "!!str" {
-			errs = append(errs, lineErr(file, cname.Line, "containers.name must be string"))
+			errs = append(errs, lineErr(file, cname.Line, "name must be string"))
+		} else if strings.TrimSpace(cname.Value) == "" {
+			// expected: "<file>:<line> name is required"
+			errs = append(errs, lineErr(file, cname.Line, "name is required"))
 		} else {
+			// only here validate snake_case + uniqueness
 			if !snakeCaseRe.MatchString(cname.Value) || seen[cname.Value] {
 				errs = append(errs, lineErr(file, cname.Line, fmt.Sprintf("containers.name has invalid format '%s'", cname.Value)))
 			}
 			seen[cname.Value] = true
 		}
 
+		// image required
 		img := get(c, "image")
 		if img == nil {
 			errs = append(errs, req(file, "containers.image"))
@@ -250,10 +250,12 @@ func validateContainers(file string, n *yaml.Node) []ValError {
 			errs = append(errs, lineErr(file, img.Line, fmt.Sprintf("containers.image has invalid format '%s'", img.Value)))
 		}
 
+		// ports optional
 		if ports := get(c, "ports"); ports != nil {
 			errs = append(errs, validatePorts(file, ports)...)
 		}
 
+		// probes optional
 		if rp := get(c, "readinessProbe"); rp != nil {
 			errs = append(errs, validateProbe(file, rp, "readinessProbe")...)
 		}
@@ -261,6 +263,7 @@ func validateContainers(file string, n *yaml.Node) []ValError {
 			errs = append(errs, validateProbe(file, lp, "livenessProbe")...)
 		}
 
+		// resources required
 		res := get(c, "resources")
 		if res == nil {
 			errs = append(errs, req(file, "resources"))
@@ -369,11 +372,13 @@ func validateResourceMap(file string, n *yaml.Node) []ValError {
 
 	var errs []ValError
 
+	// IMPORTANT: cpu must be YAML int (not string "1")
 	if cpu := get(n, "cpu"); cpu != nil {
-		if !isIntScalar(cpu) {
+		if !isYAMLInt(cpu) {
 			errs = append(errs, lineErr(file, cpu.Line, "cpu must be int"))
 		}
 	}
+
 	if mem := get(n, "memory"); mem != nil {
 		if mem.Kind != yaml.ScalarNode || mem.Tag != "!!str" {
 			errs = append(errs, lineErr(file, mem.Line, "memory must be string"))
@@ -432,8 +437,8 @@ func mustString(file string, n *yaml.Node, field string) []ValError {
 	return nil
 }
 
-func isIntScalar(n *yaml.Node) bool {
-	if n.Kind != yaml.ScalarNode {
+func isYAMLInt(n *yaml.Node) bool {
+	if n.Kind != yaml.ScalarNode || n.Tag != "!!int" {
 		return false
 	}
 	_, err := strconv.ParseInt(strings.TrimSpace(n.Value), 10, 64)
