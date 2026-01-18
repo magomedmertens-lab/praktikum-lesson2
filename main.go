@@ -46,7 +46,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	errs := validatePod(filepath.Clean(path), &root)
+	// IMPORTANT: only filename, not full path (tests expect basename)
+	errs := validatePod(filepath.Base(path), &root)
 	if len(errs) > 0 {
 		for _, e := range errs {
 			// IMPORTANT: stdout
